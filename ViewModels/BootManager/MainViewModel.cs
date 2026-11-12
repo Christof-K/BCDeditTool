@@ -159,6 +159,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 SetStatus($"Successfully loaded {Entries.Count} boot entries and {Drives.Count} disk volumes.", false);
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            SetStatus("Loading cancelled.", false);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to refresh boot manager information");
@@ -225,6 +229,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private async Task SaveTimeoutAsync(CancellationToken cancellationToken)
     {
+        if (BootTimeoutSeconds is < 0 or > 300)
+        {
+            SetStatus("Boot timeout must be between 0 and 300 seconds.", true);
+            return;
+        }
+
         SetStatus($"Setting boot timeout to {BootTimeoutSeconds}s...", false);
 
         var result = await _bootManagerFacade.SetBootTimeoutAsync(BootTimeoutSeconds, cancellationToken);

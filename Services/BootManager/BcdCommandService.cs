@@ -39,7 +39,7 @@ public sealed partial class BcdCommandService : IBcdCommandService
     public async Task<IEnumerable<BcdEntry>> GetBootLoaderEntriesAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Querying all Windows Boot Loader entries via bcdedit /enum osloader /v");
-        var result = await RunProcessAsync(_options.Value.BcdExecutable, "/enum osloader /v", cancellationToken);
+        var result = await RunProcessAsync(_options.Value.BcdExecutable, cancellationToken, "/enum", "osloader", "/v");
 
         if (!result.IsSuccess)
         {
@@ -54,7 +54,7 @@ public sealed partial class BcdCommandService : IBcdCommandService
     public async Task<BcdBootManagerConfig> GetBootManagerConfigAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Querying Windows Boot Manager configuration via bcdedit /enum {{bootmgr}} /v");
-        var result = await RunProcessAsync(_options.Value.BcdExecutable, "/enum {bootmgr} /v", cancellationToken);
+        var result = await RunProcessAsync(_options.Value.BcdExecutable, cancellationToken, "/enum", "{bootmgr}", "/v");
 
         if (!result.IsSuccess)
         {
@@ -68,7 +68,7 @@ public sealed partial class BcdCommandService : IBcdCommandService
     public async Task<string?> GetCurrentBootEntryIdentifierAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Querying current OS identifier via bcdedit /enum {{current}} /v");
-        var result = await RunProcessAsync(_options.Value.BcdExecutable, "/enum {current} /v", cancellationToken);
+        var result = await RunProcessAsync(_options.Value.BcdExecutable, cancellationToken, "/enum", "{current}", "/v");
 
         if (!result.IsSuccess)
         {
@@ -87,15 +87,12 @@ public sealed partial class BcdCommandService : IBcdCommandService
 
         _logger.LogInformation("Updating description for entry {Identifier} to {NewDescription}", identifier, newDescription);
 
-        // Escape double quotes if present in description
-        var safeDescription = newDescription.Replace("\"", "\\\"", StringComparison.Ordinal);
-        var arguments = $"/set {identifier} description \"{safeDescription}\"";
-
-        var result = await RunProcessAsync(_options.Value.BcdExecutable, arguments, cancellationToken);
+        var arguments = new[] { "/set", identifier, "description", newDescription };
+        var result = await RunProcessAsync(_options.Value.BcdExecutable, cancellationToken, arguments);
         if (result.IsSuccess)
         {
             _logger.LogInformation("Successfully updated display name for entry {Identifier}", identifier);
-            return BcdOperationResult.Success(arguments, result.StandardOutput, $"Description successfully updated to '{newDescription}'");
+            return BcdOperationResult.Success(FormatCommand(_options.Value.BcdExecutable, arguments), result.StandardOutput, $"Description successfully updated to '{newDescription}'");
         }
 
         _logger.LogError("Failed to update description for entry {Identifier}: {Error}", identifier, result.StandardError);
@@ -108,13 +105,12 @@ public sealed partial class BcdCommandService : IBcdCommandService
         ValidateStrictGuidIdentifier(identifier);
 
         _logger.LogInformation("Setting default boot entry to {Identifier}", identifier);
-        var arguments = $"/default {identifier}";
-
-        var result = await RunProcessAsync(_options.Value.BcdExecutable, arguments, cancellationToken);
+        var arguments = new[] { "/default", identifier };
+        var result = await RunProcessAsync(_options.Value.BcdExecutable, cancellationToken, arguments);
         if (result.IsSuccess)
         {
             _logger.LogInformation("Successfully configured entry {Identifier} as default OS", identifier);
-            return BcdOperationResult.Success(arguments, result.StandardOutput, $"Boot entry '{identifier}' set as system default.");
+            return BcdOperationResult.Success(FormatCommand(_options.Value.BcdExecutable, arguments), result.StandardOutput, $"Boot entry '{identifier}' set as system default.");
         }
 
         _logger.LogError("Failed to set default boot entry to {Identifier}: {Error}", identifier, result.StandardError);
@@ -127,9 +123,8 @@ public sealed partial class BcdCommandService : IBcdCommandService
         ValidateStrictGuidIdentifier(identifier);
 
         _logger.LogInformation("Configuring one-time boot sequence to {Identifier}", identifier);
-        var bootSequenceArguments = $"/bootsequence {identifier}";
-
-        var seqResult = await RunProcessAsync(_options.Value.BcdExecutable, bootSequenceArguments, cancellationToken);
+        var bootSequenceArguments = new[] { "/bootsequence", identifier };
+        var seqResult = await RunProcessAsync(_options.Value.BcdExecutable, cancellationToken, bootSequenceArguments);
         if (!seqResult.IsSuccess)
         {
             _logger.LogError("Failed to set bootsequence for {Identifier}: {Error}", identifier, seqResult.StandardError);
@@ -137,8 +132,8 @@ public sealed partial class BcdCommandService : IBcdCommandService
         }
 
         _logger.LogInformation("Triggering immediate restart into {Identifier} via {ShutdownExe}", identifier, _options.Value.ShutdownExecutable);
-        var shutdownArguments = "/r /t 0 /f";
-        var shutdownResult = await RunProcessAsync(_options.Value.ShutdownExecutable, shutdownArguments, cancellationToken);
+        var shutdownArguments = new[] { "/r", "/t", "0", "/f" };
+        var shutdownResult = await RunProcessAsync(_options.Value.ShutdownExecutable, cancellationToken, shutdownArguments);
 
         if (!shutdownResult.IsSuccess)
         {
@@ -147,7 +142,7 @@ public sealed partial class BcdCommandService : IBcdCommandService
         }
 
         return BcdOperationResult.Success(
-            $"{bootSequenceArguments} && {shutdownArguments}",
+            $"{FormatCommand(_options.Value.BcdExecutable, bootSequenceArguments)} && {FormatCommand(_options.Value.ShutdownExecutable, shutdownArguments)}",
             shutdownResult.StandardOutput,
             $"Reboot initiated into operating system {identifier}");
     }
@@ -160,12 +155,11 @@ public sealed partial class BcdCommandService : IBcdCommandService
         }
 
         _logger.LogInformation("Configuring boot timeout to {Timeout} seconds", timeoutSeconds);
-        var arguments = $"/timeout {timeoutSeconds}";
-
-        var result = await RunProcessAsync(_options.Value.BcdExecutable, arguments, cancellationToken);
+        var arguments = new[] { "/timeout", timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        var result = await RunProcessAsync(_options.Value.BcdExecutable, cancellationToken, arguments);
         if (result.IsSuccess)
         {
-            return BcdOperationResult.Success(arguments, result.StandardOutput, $"Boot timeout set to {timeoutSeconds}s.");
+            return BcdOperationResult.Success(FormatCommand(_options.Value.BcdExecutable, arguments), result.StandardOutput, $"Boot timeout set to {timeoutSeconds}s.");
         }
 
         return result;
@@ -176,12 +170,11 @@ public sealed partial class BcdCommandService : IBcdCommandService
         ArgumentException.ThrowIfNullOrWhiteSpace(targetFilePath);
 
         _logger.LogInformation("Exporting BCD backup to {TargetPath}", targetFilePath);
-        var arguments = $"/export \"{targetFilePath}\"";
-
-        var result = await RunProcessAsync(_options.Value.BcdExecutable, arguments, cancellationToken);
+        var arguments = new[] { "/export", targetFilePath };
+        var result = await RunProcessAsync(_options.Value.BcdExecutable, cancellationToken, arguments);
         if (result.IsSuccess)
         {
-            return BcdOperationResult.Success(arguments, result.StandardOutput, $"BCD successfully backed up to '{targetFilePath}'.");
+            return BcdOperationResult.Success(FormatCommand(_options.Value.BcdExecutable, arguments), result.StandardOutput, $"BCD successfully backed up to '{targetFilePath}'.");
         }
 
         return result;
@@ -201,12 +194,11 @@ public sealed partial class BcdCommandService : IBcdCommandService
         }
     }
 
-    private static async Task<BcdOperationResult> RunProcessAsync(string executable, string arguments, CancellationToken cancellationToken)
+    private static async Task<BcdOperationResult> RunProcessAsync(string executable, CancellationToken cancellationToken, params string[] arguments)
     {
         var startInfo = new ProcessStartInfo
         {
             FileName = executable,
-            Arguments = arguments,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -215,31 +207,69 @@ public sealed partial class BcdCommandService : IBcdCommandService
             StandardErrorEncoding = System.Text.Encoding.Default
         };
 
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        var command = FormatCommand(executable, arguments);
+
         try
         {
             using var process = new Process { StartInfo = startInfo };
             process.Start();
 
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
 
-            await process.WaitForExitAsync(cancellationToken);
+            try
+            {
+                await process.WaitForExitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                }
+                catch (InvalidOperationException) when (process.HasExited)
+                {
+                }
+
+                await process.WaitForExitAsync(CancellationToken.None);
+                await Task.WhenAll(stdoutTask, stderrTask);
+                throw;
+            }
 
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
 
             if (process.ExitCode == 0)
             {
-                return BcdOperationResult.Success($"{executable} {arguments}", stdout, "Command completed successfully.");
+                return BcdOperationResult.Success(command, stdout, "Command completed successfully.");
             }
 
             var combinedError = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
-            return BcdOperationResult.Failure($"{executable} {arguments}", combinedError, process.ExitCode, $"Process exited with code {process.ExitCode}");
+            return BcdOperationResult.Failure(command, combinedError, process.ExitCode, $"Process exited with code {process.ExitCode}");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            return BcdOperationResult.Failure($"{executable} {arguments}", ex.Message, -1, $"Failed to launch command: {ex.Message}");
+            return BcdOperationResult.Failure(command, ex.Message, -1, $"Failed to launch command: {ex.Message}");
         }
+    }
+
+    private static string FormatCommand(string executable, IEnumerable<string> arguments)
+    {
+        var formattedArguments = arguments.Select(argument =>
+            "\"" + argument.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"");
+        return $"{executable} {string.Join(" ", formattedArguments)}";
     }
 
     private static IEnumerable<BcdEntry> ParseOsLoaderEntries(string rawText)

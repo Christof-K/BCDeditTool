@@ -72,6 +72,10 @@ public sealed partial class DriveDetectionService : IDriveDetectionService
                 _logger.LogDebug("Detected drive {DriveLetter} ({VolumeLabel}) - HasWindows: {HasWindows}", driveLetter, label, hasWindows);
             }
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to enumerate system storage drives");
